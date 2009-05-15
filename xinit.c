@@ -32,12 +32,13 @@ in this Software without prior written authorization from The Open Group.
 # include "config.h"
 #endif
 
-#include <X11/Xlib.h>
-#include <X11/Xos.h>
-#include <X11/Xatom.h>
+#include <string.h>
+#include <stdbool.h>
+#include <xcb/xcb.h>
 #include <stdio.h>
 #include <ctype.h>
 #include <stdint.h>
+#include <unistd.h>
 
 #ifdef X_POSIX_C_SOURCE
 #define _POSIX_C_SOURCE X_POSIX_C_SOURCE
@@ -176,7 +177,7 @@ static char **server = serverargv + 2;		/* make sure room for sh .xserverrc args
 static char **client = clientargv + 2;		/* make sure room for sh .xinitrc args */
 static char *displayNum = NULL;
 static char *program = NULL;
-static Display *xd = NULL;			/* server connection */
+static xcb_connection_t* conn;
 #ifndef SYSV
 #if defined(__CYGWIN__) || defined(SVR4) || defined(_POSIX_SOURCE) || defined(CSRG_BASED) || defined(__UNIXOS2__) || defined(Lynx) || defined(__APPLE__)
 int status;
@@ -189,11 +190,10 @@ int clientpid = -1;
 volatile int gotSignal = 0;
 
 static void Execute ( char **vec, char **envp );
-static Bool waitforserver ( void );
-static Bool processTimeout ( int timeout, char *string );
+static bool waitforserver ( void );
+static bool processTimeout ( int timeout, char *string );
 static int startServer ( char *server[] );
 static int startClient ( char *client[] );
-static int ignorexio ( Display *dpy );
 static void shutdown ( void );
 static void set_environment ( void );
 static void Fatal(char *msg);
@@ -362,12 +362,12 @@ main(int argc, char *argv[], char *envp[])
 	 */
 	if (!client_given) {
 	    char *cp;
-	    Bool required = False;
+	    bool required = false;
 
 	    xinitrcbuf[0] = '\0';
 	    if ((cp = getenv ("XINITRC")) != NULL) {
 		(void) snprintf (xinitrcbuf, sizeof(xinitrcbuf), "%s", cp);
-		required = True;
+		required = true;
 	    } else if ((cp = getenv ("HOME")) != NULL) {
 		(void) snprintf (xinitrcbuf, sizeof(xinitrcbuf),
 				 "%s/%s", cp, XINITRC);
@@ -390,12 +390,12 @@ main(int argc, char *argv[], char *envp[])
 	 */
 	if (!server_given) {
 	    char *cp;
-	    Bool required = False;
+	    bool required = false;
 
 	    xserverrcbuf[0] = '\0';
 	    if ((cp = getenv ("XSERVERRC")) != NULL) {
 		(void) snprintf (xserverrcbuf, sizeof(xserverrcbuf), "%s", cp);
-		required = True;
+		required = true;
 	    } else if ((cp = getenv ("HOME")) != NULL) {
 		(void) snprintf (xserverrcbuf, sizeof(xserverrcbuf),
 				 "%s/%s", cp, XSERVERRC);
@@ -484,7 +484,7 @@ main(int argc, char *argv[], char *envp[])
 /*
  *	waitforserver - wait for X server to start up
  */
-static Bool
+static bool
 waitforserver(void)
 {
 	int	ncycles	 = 120;		/* # of cycles to wait */
@@ -501,9 +501,9 @@ waitforserver(void)
 #endif
 
 	for (cycles = 0; cycles < ncycles; cycles++) {
-		if ((xd = XOpenDisplay(displayNum))) {
-			return(TRUE);
-		}
+        conn = xcb_connect(displayNum, NULL);
+        if(!xcb_connection_has_error(conn))
+            return TRUE;
 		else {
 		    if (!processTimeout (1, "X server to begin accepting connections")) 
 		      break;
@@ -517,7 +517,7 @@ waitforserver(void)
 /*
  * return TRUE if we timeout waiting for pid to exit, FALSE otherwise.
  */
-static Bool
+static bool
 processTimeout(int timeout, char *string)
 {
 	int	i = 0, pidfound = -1;
@@ -668,98 +668,9 @@ startServer(char *server[])
 	return(serverpid);
 }
 
-static void
-setWindowPath(void)
-{
-	/* setting WINDOWPATH for clients */
-	Atom prop;
-	Atom actualtype;
-	int actualformat;
-	unsigned long nitems;
-	unsigned long bytes_after;
-	unsigned char *buf;
-	const char *windowpath;
-	char *newwindowpath;
-	unsigned long num;
-	char nums[10];
-	int numn;
-	size_t len;
-	prop = XInternAtom(xd, "XFree86_VT", False);
-	if (prop == None) {
-#ifdef DEBUG
-		fprintf(stderr, "no XFree86_VT atom\n");
-#endif
-		return;
-	}
-	if (XGetWindowProperty(xd, DefaultRootWindow(xd), prop, 0, 1, 
-		False, AnyPropertyType, &actualtype, &actualformat, 
-		&nitems, &bytes_after, &buf)) {
-#ifdef DEBUG
-		fprintf(stderr, "no XFree86_VT property\n");
-#endif
-		return;
-	}
-	if (nitems != 1) {
-#ifdef DEBUG
-		fprintf(stderr, "%lu items in XFree86_VT property!\n", nitems);
-#endif
-		XFree(buf);
-		return;
-	}
-	switch (actualtype) {
-	case XA_CARDINAL:
-	case XA_INTEGER:
-	case XA_WINDOW:
-		switch (actualformat) {
-		case  8:
-			num = (*(uint8_t  *)(void *)buf);
-			break;
-		case 16:
-			num = (*(uint16_t *)(void *)buf);
-			break;
-		case 32:
-			num = (*(uint32_t *)(void *)buf);
-			break;
-		default:
-#ifdef DEBUG
-			fprintf(stderr, "format %d in XFree86_VT property!\n", actualformat);
-#endif
-			XFree(buf);
-			return;
-		}
-		break;
-	default:
-#ifdef DEBUG	    
-		fprintf(stderr, "type %lx in XFree86_VT property!\n", actualtype);
-#endif
-		XFree(buf);
-		return;
-	}
-	XFree(buf);
-	windowpath = getenv("WINDOWPATH");
-	numn = snprintf(nums, sizeof(nums), "%lu", num);
-	if (!windowpath) {
-		len = 10 + 1 + numn + 1;
-		newwindowpath = malloc(len);
-		if (newwindowpath == NULL) 
-		    return;
-		snprintf(newwindowpath, len, "WINDOWPATH=%s", nums);
-	} else {
-		len = 10 + 1 + strlen(windowpath) + 1 + numn + 1;
-		newwindowpath = malloc(len);
-		if (newwindowpath == NULL)
-		    return;
-		snprintf(newwindowpath, len, "WINDOWPATH=%s:%s", 
-			 windowpath, nums);
-	}
-	*newenvironlast++ = newwindowpath;
-	*newenvironlast = NULL;
-}
-
 static int
 startClient(char *client[])
 {
-	setWindowPath();
 	if ((clientpid = vfork()) == 0) {
 		if (setuid(getuid()) == -1) {
 			Error("cannot change uid: %s\n", strerror(errno));
@@ -790,23 +701,13 @@ startClient(char *client[])
 
 static jmp_buf close_env;
 
-static int 
-ignorexio(Display *dpy)
-{
-    fprintf (stderr, "%s:  connection to X server lost.\r\n", program);
-    longjmp (close_env, 1);
-    /*NOTREACHED*/
-    return 0;
-}
-
 static void 
 shutdown(void)
 {
 	/* have kept display opened, so close it now */
 	if (clientpid > 0) {
-		XSetIOErrorHandler (ignorexio);
 		if (! setjmp(close_env)) {
-		    XCloseDisplay(xd);
+            xcb_disconnect(conn);
 		}
 
 		/* HUP all local clients to allow them to clean up */
