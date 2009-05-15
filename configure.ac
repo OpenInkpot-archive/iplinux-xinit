@@ -123,7 +123,7 @@ AM_CONDITIONAL(LAUNCHD, [test "x$LAUNCHD" = "xyes"])
 AM_CONDITIONAL(TIGER_LAUNCHD, [test "x$TIGER_LAUNCHD" = "xyes"])
 
 # Checks for pkg-config packages
-PKG_CHECK_MODULES(XINIT, x11)
+PKG_CHECK_MODULES(XINIT, xcb)
 
 case $host_os in
     *bsd*)
