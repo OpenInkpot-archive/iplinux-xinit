@@ -1,0 +1,23 @@
+Source: xinit
+Section: gui
+Priority: optional
+Maintainer: Mikhail Gusarov <dottedmag@dottedmag.net>
+XCS-Cross-Host-Build-Depends: debhelper (>= 7), pkg-config, quilt, automake, xorg-util-macros
+XCS-Cross-Build-Depends: libxcb1-dev
+Build-Depends:
+ debhelper (>= 5.0.0),
+ pkg-config,
+ libxcb1-dev,
+ quilt,
+ automake,
+ xorg-util-macros
+Standards-Version: 3.7.3
+Vcs-Git: git://git.debian.org/git/pkg-xorg/app/xinit
+Vcs-Browser: http://git.debian.org/?p=pkg-xorg/app/xinit.git
+
+Package: xinit
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: X server initialisation tool
+ xinit is the program which facilitates starting an X server, and
+ loading a base X session.
